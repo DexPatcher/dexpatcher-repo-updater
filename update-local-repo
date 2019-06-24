@@ -274,12 +274,12 @@ process_apktool_release() {
 
     # apktool-aapt(2)
     
-    aapt="$base_dir/build/apktool-aapt.zip"
-    aapt2="$base_dir/build/apktool-aapt2.zip"
+    aapt="$base_dir/build/apktool-aapt.jar"
+    aapt2="$base_dir/build/apktool-aapt2.jar"
 
     mkdir -p "$base_dir/build"
     rm -f "$aapt" "$aapt2"
-    "$base_dir/pack_aapt_and_aapt2" "$file" "$aapt" "$aapt2"
+    "$base_dir/pack_aapt_and_aapt2" "$file" "$version" "$aapt" "$aapt2"
 
     main_artifact="$artifact"
 
@@ -291,7 +291,7 @@ process_apktool_release() {
         fi
 
         artifact="apktool-aapt"
-        file="$group_dir/$artifact/$version/$artifact-$version.zip"
+        file="$group_dir/$artifact/$version/$artifact-$version.jar"
 
         mkdir -p "$( dirname "$file" )"
         rm -f "$file"
@@ -310,7 +310,7 @@ process_apktool_release() {
         fi
 
         artifact="apktool-aapt2"
-        file="$group_dir/$artifact/$version/$artifact-$version.zip"
+        file="$group_dir/$artifact/$version/$artifact-$version.jar"
 
         mkdir -p "$( dirname "$file" )"
         rm -f "$file"

@@ -1,4 +1,5 @@
 File apktool = project.file(project.property('apktool'))
+String apktoolVersion = project.property('apktoolVersion')
 File aapt = project.file(project.property('aapt'))
 File aapt2 = project.file(project.property('aapt2'))
 
@@ -29,9 +30,9 @@ def packAaptAndAapt2 = project.tasks.register('packAaptAndAapt2') {
 
 }
 
-TaskProvider<Zip> registerPackAaptTask(String name, String tool, File apktool, File out) {
+TaskProvider<Jar> registerPackAaptTask(String name, String tool, File apktool, File out) {
 
-    return project.tasks.register(name, Zip) {
+    return project.tasks.register(name, Jar) {
 
         it.zip64 = true
         it.reproducibleFileOrder = true
@@ -41,6 +42,14 @@ TaskProvider<Zip> registerPackAaptTask(String name, String tool, File apktool, F
 
         it.archiveFileName.set out.name
         it.destinationDirectory.set project.layout.projectDirectory.dir(out.parent)
+
+        it.manifest { Manifest manifest ->
+            manifest.attributes(
+                'Apktool-Artifact': tool,
+                'Apktool-Version': apktoolVersion,
+                'Created-By': 'dexpatcher-repo-updater',
+            )
+        }
 
         //it.dependsOn unpackApktool
         //def source = apktoolDir

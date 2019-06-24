@@ -21,9 +21,10 @@ pack_aapt_and_aapt2() {
     gradle \
         --quiet \
         -Papktool="$1" \
-        -Paapt="$2" \
-        -Paapt2="$3" \
-        packAaptAndAapt2 "${@:4}"
+        -PapktoolVersion="$2" \
+        -Paapt="$3" \
+        -Paapt2="$4" \
+        packAaptAndAapt2 "${@:5}"
 
 }
 
