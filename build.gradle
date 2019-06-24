@@ -1,0 +1,106 @@
+File apktool = project.file(project.property('apktool'))
+File aapt = project.file(project.property('aapt'))
+File aapt2 = project.file(project.property('aapt2'))
+
+/*
+File apktoolDir = project.layout.buildDirectory.dir('apktool').get().getAsFile()
+
+def unpackApktool = project.tasks.register('unpackApktool', Copy) {
+
+    it.doFirst {
+        project.delete apktoolDir
+        apktoolDir.mkdir()
+    }
+    
+    it.from(project.zipTree(apktool)) { CopySpec spec ->
+        spec.include "prebuilt/"
+    }
+    it.into apktoolDir
+
+}
+*/
+
+def packAapt = registerPackAaptTask('packAapt', 'aapt', apktool, aapt)
+def packAapt2 = registerPackAaptTask('packAapt2', 'aapt2', apktool, aapt2)
+
+def packAaptAndAapt2 = project.tasks.register('packAaptAndAapt2') {
+
+    it.dependsOn packAapt, packAapt2
+
+}
+
+TaskProvider<Zip> registerPackAaptTask(String name, String tool, File apktool, File out) {
+
+    return project.tasks.register(name, Zip) {
+
+        it.zip64 = true
+        it.reproducibleFileOrder = true
+        it.preserveFileTimestamps = false
+        it.duplicatesStrategy = DuplicatesStrategy.FAIL
+        //it.entryCompression = ZipEntryCompression.STORED
+
+        it.archiveFileName.set out.name
+        it.destinationDirectory.set project.layout.projectDirectory.dir(out.parent)
+
+        //it.dependsOn unpackApktool
+        //def source = apktoolDir
+        def source = project.zipTree(apktool)
+
+        def modeRegular = 0644
+        def modeExecutable = 0755
+
+        def modeLinux = modeExecutable
+        def modeMacosx = modeExecutable
+        def modeWindows = modeExecutable
+
+        // Apktool < 2.4.0 Naming Scheme
+        
+        // 64/32-bit:
+        copyFile it, source, "prebuilt/${tool}/linux/${tool}", "linux/${tool}", modeLinux
+        copyFile it, source, "prebuilt/${tool}/macosx/${tool}", "macosx/${tool}", modeMacosx
+        copyFile it, source, "prebuilt/${tool}/windows/${tool}.exe", "windows/${tool}.exe", modeWindows
+
+        // 32-bit:
+        copyFile it, source, "prebuilt/${tool}/windows/${tool}.exe", "windows/i386/${tool}.exe", modeWindows
+
+        // Apktool >= 2.4.0 Naming Scheme
+        
+        // 64-bit:
+        copyFile it, source, "prebuilt/linux/${tool}_64", "linux/${tool}", modeLinux
+        copyFile it, source, "prebuilt/macosx/${tool}_64", "macosx/${tool}", modeMacosx
+        copyFile it, source, "prebuilt/windows/${tool}_64.exe", "windows/${tool}.exe", modeWindows
+
+        // 32-bit:
+        copyFile it, source, "prebuilt/linux/${tool}", "linux/i386/${tool}", modeLinux
+        copyFile it, source, "prebuilt/macosx/${tool}", "macosx/i386/${tool}", modeMacosx
+        copyFile it, source, "prebuilt/windows/${tool}.exe", "windows/i386/${tool}.exe", modeWindows
+
+        it.from('aapt-NOTICE') { CopySpec spec ->
+            spec.eachFile { details ->
+                details.path = 'NOTICE'
+                details.mode = modeRegular
+            }
+        }
+
+        it.doLast {
+            // Delete archives not bundling any executables.
+            if (out.length() < 64 * 1024) {
+                project.delete out
+            }
+        }
+
+    }
+
+}
+
+def copyFile(def it, def source, def from, def to, def mode) {
+
+    it.from(source) { CopySpec spec ->
+        spec.include from
+        spec.eachFile { details ->
+            details.path = to
+            details.mode = mode
+        }
+    }
+
+}

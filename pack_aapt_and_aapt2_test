@@ -1,0 +1,23 @@
+#!/bin/bash
+
+set -e
+
+base_dir="$(dirname "$(readlink -f "$0")")"
+
+source "$base_dir/global"
+
+pack_test() {
+
+    "$base_dir/pack_aapt_and_aapt2" "$repo_dir/dexpatcher-repo/ibotpeaches/apktool/apktool/$1/apktool-$1.jar" "apktool-aapt-$1.zip" "apktool-aapt2-$1.zip" "${@:2}"
+
+}
+
+pack_aapt_and_aapt2_test() {
+
+    pack_test "2.2.1" "$@"
+    pack_test "2.3.2" "$@"
+    pack_test "2.4.0" "$@"
+
+}
+
+pack_aapt_and_aapt2_test "$@"

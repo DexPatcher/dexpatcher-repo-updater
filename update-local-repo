@@ -1,0 +1,466 @@
+#!/bin/bash
+
+set -e
+
+base_dir="$(dirname "$(readlink -f "$0")")"
+
+source "$base_dir/global"
+
+error() {
+
+    >&2 echo "Error:" "$@"
+    exit 1
+
+}
+
+### Releases
+
+curl_gh() {
+
+    local token_file="$base_dir/github-oauth-token"
+    if [[ -f "$token_file" ]]; then
+        curl -H "Authorization: token $( cat "$token_file" )" "$@"
+    else
+        curl "$@"
+    fi
+
+}
+
+query_releases_once() {
+
+    local user="$1"
+    local repo="$2"
+
+    #>&2 echo "Querying releases..."
+    local releases=""
+    local page
+    for (( page = 1; ; page++ )); do
+        >&2 echo -n "Page $page... "
+        local release_page="$( curl_gh -#f "https://api.github.com/repos/$user/$repo/releases?page=$page" )"
+        release_page="$( jq '.[]' <<< "$release_page" )"
+        [[ "$release_page" == "" ]] && break
+        releases="$releases$release_page"
+    done
+    >&2 echo "$(( page - 1 )) page(s)"
+    >&2 echo
+
+    printf '%s' "$releases"
+
+}
+
+query_releases() {
+
+    local user="$1"
+    local repo="$2"
+
+    local verify_releases=true
+
+    >&2 echo "Querying releases..."
+    local releases="$( query_releases_once "$user" "$repo" )"
+    while $verify_releases; do
+        >&2 echo "Verifying releases..."
+        local releases2="$( query_releases_once "$user" "$repo" )"
+        [[ "$releases" == "$releases2" ]] && break
+        releases="$releases2"
+    done
+
+    printf '%s' "$releases"
+
+}
+
+process_releases() {
+
+    local releases="$1"
+    local release_processor="$2"
+
+    local ids=( $( jq '.id' <<< "$releases" ) )
+    for id in ${ids[@]}; do
+        local release="$( jq "select((.id == $id) and (.assets | length > 0))" <<< "$releases" )"
+        if [[ "$release" != "" ]]; then
+            local tag="$( jq -r '.tag_name' <<< "$release" )"
+            local prerelease="$( jq -r '.prerelease' <<< "$release" )"
+            "$release_processor" "$release" "$tag" "$prerelease"
+        fi
+    done
+
+}
+
+process_repo() {
+
+    local user="$1"
+    local repo="$2"
+    local release_processor="$3"
+
+    local releases="$( query_releases "$user" "$repo" )"
+    process_releases "$releases" "$release_processor"
+
+}
+
+### Maven
+
+add_checksums() {
+
+    local file="$1"
+    
+    local md5=( $( md5sum -b "$file" ) )
+    printf '%s' "$md5" >"$file.md5"
+
+    local sha1=( $( sha1sum -b "$file" ) )
+    printf '%s' "$sha1" >"$file.sha1"
+
+}
+
+download_asset() {
+
+    if [[ -f "$file" ]]; then
+        local size="$( jq '.size' <<< "$asset" )"
+        if (( size != $( stat --printf '%s' "$file" ) )); then
+            error "Remote and local asset size mismatch"
+        fi
+        echo "Asset '$( basename "$file" )' already downloaded"
+    else
+        local url="$( jq -r '.browser_download_url' <<< "$asset" )"
+        mkdir -p "$(dirname "$file")"
+        curl_gh -#fL --output "$file" "$url"
+    fi
+    add_checksums "$file"
+
+}
+
+process_asset() { 
+
+    local asset_count="$( jq -s 'length' <<< "$asset" )"
+    if (( $asset_count == 0 )); then error "No asset found"; fi
+    if (( $asset_count > 1 )); then error "Multiple assets found"; fi
+
+    download_asset
+
+}
+
+html_escape () {
+
+    local s="$1"
+
+    s="${s//&/&amp;}"
+    s="${s//</&lt;}"
+    s="${s//>/&gt;}"
+    s="${s//'"'/&quot;}"
+
+    printf '%s' "$s"
+
+}
+
+create_pom() {
+
+    local file="$group_dir/$artifact/$version/$artifact-$version.pom"
+    local uploader="$( jq -r '.uploader.login' <<< "$asset" )"
+
+    cat >"$file" <<__EOF__
+<?xml version="1.0" encoding="UTF-8"?>
+<project
+    xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>$group</groupId>
+  <artifactId>$artifact</artifactId>
+  <version>$version</version>
+  <url>https://github.com/$user/$repo</url>
+  <organization>
+    <name>DexPatcher</name>
+    <url>https://dexpatcher.github.io/</url>
+  </organization>
+  <developers>
+    <developer>
+      <id>$uploader</id>
+      <url>https://github.com/$uploader</url>
+    </developer>
+  </developers>
+  <scm>
+    <url>https://github.com/$user/$repo</url>
+  </scm>
+</project>
+__EOF__
+
+    add_checksums "$file"
+
+}
+
+create_metadata() {
+
+    local file="$group_dir/$artifact/maven-metadata.xml"
+
+    cat >"$file" <<__EOF__
+<?xml version="1.0" encoding="UTF-8"?>
+<metadata
+    xmlns="http://maven.apache.org/METADATA/1.1.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/METADATA/1.1.0 http://maven.apache.org/xsd/repository-metadata-1.1.0.xsd"
+    modelVersion="1.1.0">
+  <groupId>$group</groupId>
+  <artifactId>$artifact</artifactId>
+  <versioning>
+    <latest>${versions[-1]}</latest>
+    <release>${release_versions[-1]}</release>
+    <versions>
+__EOF__
+    local version
+    for version in "${versions[@]}"; do
+        cat >>"$file" <<__EOF__
+      <version>$version</version>
+__EOF__
+    done
+    cat >>"$file" <<__EOF__
+    </versions>
+__EOF__
+    #<lastUpdated>20190613143244</lastUpdated>
+    cat >>"$file" <<__EOF__
+  </versioning>
+</metadata>
+__EOF__
+
+    add_checksums "$file"
+
+}
+
+setup_repo() {
+
+    echo
+    echo "### $user/$repo ###"
+    echo
+
+    group_dir="$repo_dir/${group//.//}"
+
+    versions=()
+    release_versions=()
+
+}
+
+setup_version() {
+
+    versions=( "$version" "${versions[@]}" )
+    if [[ "$prerelease" == 'false' ]]; then
+        release_versions=( "$version" "${release_versions[@]}" )
+        echo "Version: $version"
+    else
+        echo "Version: $version (pre-release)"
+    fi
+
+}
+
+finish_repo() {
+
+    create_metadata
+
+    echo
+
+}
+
+### Apktool
+
+process_apktool_release() {
+
+    release="$1"
+    tag="$2"
+    prerelease="$3"
+
+    version="${tag#v}"
+    setup_version
+
+    asset="$( jq ".assets[] | select(.name == \"apktool_$version.jar\")" <<< "$release" )"
+    file="$group_dir/$artifact/$version/$artifact-$version.jar"
+    process_asset
+    create_pom
+
+    # apktool-aapt(2)
+    
+    aapt="$base_dir/build/apktool-aapt.zip"
+    aapt2="$base_dir/build/apktool-aapt2.zip"
+
+    mkdir -p "$base_dir/build"
+    rm -f "$aapt" "$aapt2"
+    "$base_dir/pack_aapt_and_aapt2" "$file" "$aapt" "$aapt2"
+
+    main_artifact="$artifact"
+
+    if [[ -f "$aapt" ]]; then
+
+        aapt_versions=( "$version" "${aapt_versions[@]}" )
+        if [[ "$prerelease" == 'false' ]]; then
+            aapt_release_versions=( "$version" "${aapt_release_versions[@]}" )
+        fi
+
+        artifact="apktool-aapt"
+        file="$group_dir/$artifact/$version/$artifact-$version.zip"
+
+        mkdir -p "$( dirname "$file" )"
+        rm -f "$file"
+        mv -T "$aapt" "$file"
+        add_checksums "$file"
+
+        create_pom
+
+    fi
+
+    if [[ -f "$aapt2" ]]; then
+
+        aapt2_versions=( "$version" "${aapt2_versions[@]}" )
+        if [[ "$prerelease" == 'false' ]]; then
+            aapt2_release_versions=( "$version" "${aapt2_release_versions[@]}" )
+        fi
+
+        artifact="apktool-aapt2"
+        file="$group_dir/$artifact/$version/$artifact-$version.zip"
+
+        mkdir -p "$( dirname "$file" )"
+        rm -f "$file"
+        mv -T "$aapt2" "$file"
+        add_checksums "$file"
+
+        create_pom
+
+    fi
+
+    artifact="$main_artifact"
+
+}
+
+process_apktool_repo() {
+
+    user="iBotPeaches"
+    repo="Apktool"
+
+    group="dexpatcher-repo.ibotpeaches.apktool"
+    artifact="apktool"
+
+    setup_repo
+    aapt_versions=()
+    aapt_release_versions=()
+    aapt2_versions=()
+    aapt2_release_versions=()
+    process_repo "$user" "$repo" process_apktool_release
+    finish_repo
+
+    # apktool-aapt(2)
+
+    main_artifact="$artifact"
+    main_versions=( "${versions[@]}" )
+    main_release_versions=( "${release_versions[@]}" )
+
+    artifact="apktool-aapt"
+    versions=( "${aapt_versions[@]}" )
+    release_versions=( "${aapt_release_versions[@]}" )
+    create_metadata
+
+    artifact="apktool-aapt2"
+    versions=( "${aapt2_versions[@]}" )
+    release_versions=( "${aapt2_release_versions[@]}" )
+    create_metadata
+
+    artifact="$main_artifact"
+    versions=( "${main_versions[@]}" )
+    release_versions=( "${main_release_versions[@]}" )
+
+}
+
+### dex2jar
+
+process_dex2jar_release() {
+
+    release="$1"
+    tag="$2"
+    prerelease="$3"
+
+    version="${tag#v}"
+    setup_version
+
+    asset="$( jq ".assets[] | select(.name == \"dex-tools-$version.zip\")" <<< "$release" )"
+    file="$group_dir/$artifact/$version/$artifact-$version.zip"
+    process_asset
+    create_pom
+
+}
+
+process_dex2jar_repo() {
+
+    user="DexPatcher"
+    repo="dex2jar"
+
+    group="dexpatcher-repo.dexpatcher.dex2jar"
+    artifact="dex-tools"
+
+    setup_repo
+    process_repo "$user" "$repo" process_dex2jar_release
+    finish_repo
+
+}
+
+### DexPatcher
+
+process_dexpatcher_release() {
+
+    release="$1"
+    tag="$2"
+    prerelease="$3"
+
+    version="${tag#v}"
+    setup_version
+
+    asset="$( jq ".assets[] | select(.name == \"dexpatcher-$version.jar\")" <<< "$release" )"
+    file="$group_dir/$artifact/$version/$artifact-$version.jar"
+    process_asset
+    create_pom
+
+    # dexpatcher-annotation
+
+    jar_file="$file"
+    main_artifact="$artifact"
+
+    artifact="dexpatcher-annotation"
+    file="$group_dir/$artifact/$version/$artifact-$version.jar"
+
+    mkdir -p "$( dirname "$file" )"
+    rm -f "$file"
+    unzip -q -d "$( dirname "$file" )" "$jar_file" "$( basename "$file" )" >/dev/null
+    add_checksums "$file"
+
+    create_pom
+
+    artifact="$main_artifact"
+
+}
+
+process_dexpatcher_repo() {
+
+    user="DexPatcher"
+    repo="dexpatcher-tool"
+
+    group="dexpatcher-repo.dexpatcher.dexpatcher-tool"
+    artifact="dexpatcher"
+
+    setup_repo
+    process_repo "$user" "$repo" process_dexpatcher_release
+    finish_repo
+
+    # dexpatcher-annotation
+
+    main_artifact="$artifact"
+
+    artifact="dexpatcher-annotation"
+    create_metadata
+
+    artifact="$main_artifact"
+
+}
+
+### Main
+
+process_all_repos() {
+
+    process_apktool_repo
+    process_dex2jar_repo
+    process_dexpatcher_repo
+
+}
+
+process_all_repos

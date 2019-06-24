@@ -1,0 +1,30 @@
+#!/bin/bash
+
+set -e
+
+base_dir="$(dirname "$(readlink -f "$0")")"
+
+source "$base_dir/global"
+
+gradle() {
+
+    "$base_dir/gradlew" \
+        --offline \
+        --project-dir "$base_dir" \
+        --gradle-user-home "$base_dir/.gradle/gradle-home" \
+        "$@"
+
+}
+
+pack_aapt_and_aapt2() {
+
+    gradle \
+        --quiet \
+        -Papktool="$1" \
+        -Paapt="$2" \
+        -Paapt2="$3" \
+        packAaptAndAapt2 "${@:4}"
+
+}
+
+pack_aapt_and_aapt2 "$@"

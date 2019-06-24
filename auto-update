@@ -1,0 +1,64 @@
+#!/bin/bash
+
+set -e
+
+base_dir="$(dirname "$(readlink -f "$0")")"
+
+source "$base_dir/global"
+
+error() {
+
+    >&2 echo "Error:" "$@"
+    exit 1
+
+}
+
+check_git_status() {
+
+    local text="$1"
+
+    if [[ "$( git status --porcelain )" != "" ]]; then
+        #git gui & disown
+        #nohup git gui >/dev/null 2>&1 &
+        WINDOWID= zenity --error --title "DexPatcher Repo Updater" --text "$text" >/dev/null 2>&1
+        git gui
+        error "$text"
+    fi
+
+}
+
+auto_update() {
+
+    echo
+    echo
+    echo
+    echo "      #################################"
+    echo "      ##                             ##"
+    echo "      ##   DexPatcher Repo Updater   ##"
+    echo "      ##                             ##"
+    echo "      #################################"
+    echo
+    echo
+
+    cd "$repo_dir"
+    check_git_status "Local DexPatcher repo is dirty."
+
+    "$base_dir/update-local-repo"
+
+    check_git_status "Local DexPatcher repo has changed."
+
+    echo
+    echo
+    echo "      #############################"
+    echo "      ##                         ##"
+    echo "      ##   NO CHANGES DETECTED   ##"
+    echo "      ##                         ##"
+    echo "      #############################"
+    echo
+    echo
+
+    sleep 10
+
+}
+
+auto_update
