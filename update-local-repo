@@ -35,7 +35,7 @@ query_releases_once() {
     local releases=""
     local page
     for (( page = 1; ; page++ )); do
-        local release_page="$( curl_gh -sf "https://api.github.com/repos/$user/$repo/releases?page=$page" )"
+        local release_page="$( curl_gh -sfL "https://api.github.com/repos/$user/$repo/releases?page=$page" )"
         release_page="$( jq '.[]' <<< "$release_page" )"
         [[ "$release_page" == "" ]] && break
         releases="$releases$release_page"
