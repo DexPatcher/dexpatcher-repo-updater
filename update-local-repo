@@ -31,18 +31,17 @@ query_releases_once() {
     local user="$1"
     local repo="$2"
 
-    #>&2 echo "Querying releases..."
+    #>&2 echo -n "Querying releases... "
     local releases=""
     local page
     for (( page = 1; ; page++ )); do
-        >&2 echo -n "Page $page... "
-        local release_page="$( curl_gh -#f "https://api.github.com/repos/$user/$repo/releases?page=$page" )"
+        local release_page="$( curl_gh -sf "https://api.github.com/repos/$user/$repo/releases?page=$page" )"
         release_page="$( jq '.[]' <<< "$release_page" )"
         [[ "$release_page" == "" ]] && break
         releases="$releases$release_page"
     done
     >&2 echo "$(( page - 1 )) page(s)"
-    >&2 echo
+    #>&2 echo
 
     printf '%s' "$releases"
 
@@ -55,14 +54,15 @@ query_releases() {
 
     local verify_releases=true
 
-    >&2 echo "Querying releases..."
+    >&2 echo -n "Querying releases... "
     local releases="$( query_releases_once "$user" "$repo" )"
     while $verify_releases; do
-        >&2 echo "Verifying releases..."
+        >&2 echo -n "Verifying releases... "
         local releases2="$( query_releases_once "$user" "$repo" )"
         [[ "$releases" == "$releases2" ]] && break
         releases="$releases2"
     done
+    >&2 echo
 
     printf '%s' "$releases"
 
